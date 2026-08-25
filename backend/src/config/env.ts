@@ -3,7 +3,7 @@ import 'dotenv/config'
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.string().default('3000').transform(Number),
+  PORT: z.string().default('5000').transform(Number),
   DATABASE_URL: z.string().default('mysql://root:password@localhost:3306/routesync'),
   JWT_ACCESS_SECRET: z.string().default('routesync_super_secret_jwt_access_token_key_2026!'),
   JWT_REFRESH_SECRET: z.string().default('routesync_super_secret_jwt_refresh_token_key_2026!'),

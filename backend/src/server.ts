@@ -7,7 +7,6 @@ import morgan from 'morgan'
 import compression from 'compression'
 import rateLimit from 'express-rate-limit'
 import { Server as IOServer } from 'socket.io'
-import { createServer as createViteServer } from 'vite'
 
 import { env } from './config/env'
 import { logger } from './config/logger'
@@ -27,7 +26,7 @@ async function startServer() {
     cors: { origin: env.CORS_ORIGIN, methods: ['GET', 'POST'] },
   })
 
-  // Security Middleware - allow CartoDB/OSM tiles and cdn fonts
+  // Security Middleware
   app.use(
     helmet({
       contentSecurityPolicy: false,
@@ -64,21 +63,12 @@ async function startServer() {
   // Setup Socket.IO
   setupSockets(io)
 
-  // Frontend Serving (Vite middleware in dev, Static build in prod)
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      root: path.resolve(process.cwd(), 'frontend'),
-      server: {
-        middlewareMode: true,
-      },
-      appType: 'spa',
-    })
-    app.use(vite.middlewares)
-  } else {
-    const distPath = path.resolve(process.cwd(), 'frontend/dist')
-    app.use(express.static(distPath))
+  // Optional: Serve production frontend static build if present
+  const frontendDistPath = path.resolve(process.cwd(), '../frontend/dist')
+  if (process.env.NODE_ENV === 'production') {
+    app.use(express.static(frontendDistPath))
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'))
+      res.sendFile(path.join(frontendDistPath, 'index.html'))
     })
   }
 
@@ -86,7 +76,7 @@ async function startServer() {
   app.use('/api/*', notFound)
   app.use(errorHandler)
 
-  const port = env.PORT || 3000
+  const port = env.PORT || 5000
   server.listen(port, '0.0.0.0', () => {
     logger.info(`🚀 RouteSync server running in ${env.NODE_ENV} mode on http://0.0.0.0:${port}`)
   })
