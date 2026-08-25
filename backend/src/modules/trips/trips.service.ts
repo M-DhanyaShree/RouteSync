@@ -28,7 +28,7 @@ export class TripsService {
 
     // 3. Get PRESENT students
     const todayAttendance = await attendanceRepository.findTodayForGroup(dto.groupId)
-    const presentStudents = todayAttendance.filter(a => a.status === 'PRESENT')
+    const presentStudents = todayAttendance.filter((a: any) => a.status === 'PRESENT')
     
     if (presentStudents.length === 0) {
       await tripsRepository.updateTripStatus(trip.id, 'COMPLETED', { endedAt: new Date() })
@@ -42,7 +42,7 @@ export class TripsService {
       if (loc) {
         stopsForOptimization.push({
           studentId: record.studentId,
-          name: record.student.name,
+          name: record.student?.name || 'Student',
           lat: loc.lat,
           lng: loc.lng,
           address: loc.address
@@ -52,7 +52,7 @@ export class TripsService {
 
     // 5. Optimize route
     const destinationLoc = dto.destinationId 
-      ? group.destinations.find(d => d.id === dto.destinationId) 
+      ? group.destinations.find((d: any) => d.id === dto.destinationId) 
       : group.destinations[0]
 
     if (!destinationLoc) throw new AppError('No destination configured for group', 400)

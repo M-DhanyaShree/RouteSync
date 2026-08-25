@@ -1,6 +1,6 @@
 import { prisma } from '../../config/database'
 import { RegisterDto } from './auth.dto'
-import { User } from '@prisma/client'
+import { User } from '../../shared/types/api.types'
 
 export class AuthRepository {
   async findByEmail(email: string): Promise<User | null> {

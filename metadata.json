@@ -1,0 +1,10 @@
+{
+  "name": "RouteSync",
+  "description": "Smart Attendance-Aware Van Route Optimization and Real-Time ETA Tracking Platform",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

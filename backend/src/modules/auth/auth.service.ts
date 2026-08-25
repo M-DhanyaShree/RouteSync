@@ -4,17 +4,16 @@ import { authRepository } from './auth.repository'
 import { RegisterDto, LoginDto } from './auth.dto'
 import { env } from '../../config/env'
 import { AppError } from '../../middleware/error.middleware'
-import { JwtAccessPayload, JwtRefreshPayload } from '../../shared/types/api.types'
-import { User } from '@prisma/client'
+import { JwtAccessPayload, JwtRefreshPayload, User } from '../../shared/types/api.types'
 
 function generateAccessToken(user: User): string {
   const payload: JwtAccessPayload = { userId: user.id, role: user.role, email: user.email }
-  return jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: env.JWT_ACCESS_EXPIRES_IN })
+  return jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: env.JWT_ACCESS_EXPIRES_IN as any })
 }
 
 function generateRefreshToken(user: User): string {
   const payload: JwtRefreshPayload = { userId: user.id }
-  return jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: env.JWT_REFRESH_EXPIRES_IN })
+  return jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: env.JWT_REFRESH_EXPIRES_IN as any })
 }
 
 function sanitizeUser(user: User) {

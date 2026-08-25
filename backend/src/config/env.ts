@@ -3,13 +3,13 @@ import 'dotenv/config'
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.string().default('5000').transform(Number),
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 characters'),
-  JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 characters'),
+  PORT: z.string().default('3000').transform(Number),
+  DATABASE_URL: z.string().default('mysql://root:password@localhost:3306/routesync'),
+  JWT_ACCESS_SECRET: z.string().default('routesync_super_secret_jwt_access_token_key_2026!'),
+  JWT_REFRESH_SECRET: z.string().default('routesync_super_secret_jwt_refresh_token_key_2026!'),
   JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
   JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
-  CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  CORS_ORIGIN: z.string().default('*'),
   ORS_API_KEY: z.string().optional(),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.string().optional().transform(v => v ? Number(v) : undefined),

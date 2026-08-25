@@ -1,6 +1,6 @@
 import { prisma } from '../../config/database'
 import { StartTripDto } from './trips.dto'
-import { TripStatus } from '@prisma/client'
+import { TripStatus } from '../../shared/types/api.types'
 
 export class TripsRepository {
   async createTrip(driverId: string, dto: StartTripDto) {
