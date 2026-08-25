@@ -1,0 +1,307 @@
+// This is your Prisma schema file
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+//  Enums
+// ─────────────────────────────────────────────
+
+enum Role {
+  DRIVER
+  STUDENT
+  ADMIN
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+}
+
+enum TripStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum StopStatus {
+  PENDING
+  ARRIVED
+  SKIPPED
+  COMPLETED
+}
+
+enum TripEventType {
+  STARTED
+  LOCATION_UPDATE
+  STOP_ARRIVED
+  STOP_SKIPPED
+  ENDED
+  ROUTE_RECALCULATED
+}
+
+enum LocationLabel {
+  HOME
+  PICKUP
+  CUSTOM
+}
+
+// ─────────────────────────────────────────────
+//  Users
+// ─────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role
+  phone        String?
+  avatarUrl    String?  @map("avatar_url")
+  refreshToken String?  @map("refresh_token") @db.Text
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  driverGroups  Group[]        @relation("DriverGroups")
+  groupMembers  GroupMember[]
+  locations     Location[]
+  attendance    Attendance[]
+  driverTrips   Trip[]         @relation("DriverTrips")
+  notifications Notification[]
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────
+//  Groups
+// ─────────────────────────────────────────────
+
+model Group {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
+  driverId    String   @map("driver_id")
+  inviteCode  String   @unique @map("invite_code") @db.VarChar(12)
+  maxCapacity Int      @default(20) @map("max_capacity")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  driver       User          @relation("DriverGroups", fields: [driverId], references: [id], onDelete: Cascade)
+  members      GroupMember[]
+  destinations Destination[]
+  attendance   Attendance[]
+  trips        Trip[]
+
+  @@index([driverId])
+  @@index([inviteCode])
+  @@map("groups")
+}
+
+// ─────────────────────────────────────────────
+//  Group Members
+// ─────────────────────────────────────────────
+
+model GroupMember {
+  id        String   @id @default(cuid())
+  groupId   String   @map("group_id")
+  studentId String   @map("student_id")
+  joinedAt  DateTime @default(now()) @map("joined_at")
+  isActive  Boolean  @default(true) @map("is_active")
+
+  // Relations
+  group   Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  student User  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, studentId])
+  @@index([groupId])
+  @@index([studentId])
+  @@map("group_members")
+}
+
+// ─────────────────────────────────────────────
+//  Destinations (Schools / Colleges)
+// ─────────────────────────────────────────────
+
+model Destination {
+  id      String @id @default(cuid())
+  groupId String @map("group_id")
+  name    String
+  lat     Float
+  lng     Float
+  address String @db.Text
+  order   Int    @default(0)
+
+  // Relations
+  group Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  trips Trip[]
+
+  @@index([groupId])
+  @@map("destinations")
+}
+
+// ─────────────────────────────────────────────
+//  Student Pickup Locations
+// ─────────────────────────────────────────────
+
+model Location {
+  id        String        @id @default(cuid())
+  userId    String        @map("user_id")
+  lat       Float
+  lng       Float
+  address   String        @db.Text
+  label     LocationLabel @default(PICKUP)
+  isDefault Boolean       @default(false) @map("is_default")
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("locations")
+}
+
+// ─────────────────────────────────────────────
+//  Attendance
+// ─────────────────────────────────────────────
+
+model Attendance {
+  id        String           @id @default(cuid())
+  groupId   String           @map("group_id")
+  studentId String           @map("student_id")
+  tripId    String?          @map("trip_id")
+  date      DateTime         @db.Date
+  status    AttendanceStatus @default(PRESENT)
+  markedAt  DateTime         @default(now()) @map("marked_at")
+  isLocked  Boolean          @default(false) @map("is_locked")
+
+  // Relations
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  student User   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  trip    Trip?  @relation(fields: [tripId], references: [id])
+
+  @@unique([groupId, studentId, date])
+  @@index([groupId])
+  @@index([studentId])
+  @@index([date])
+  @@index([tripId])
+  @@map("attendance")
+}
+
+// ─────────────────────────────────────────────
+//  Trips
+// ─────────────────────────────────────────────
+
+model Trip {
+  id                String     @id @default(cuid())
+  groupId           String     @map("group_id")
+  driverId          String     @map("driver_id")
+  destinationId     String?    @map("destination_id")
+  status            TripStatus @default(PLANNED)
+  startedAt         DateTime?  @map("started_at")
+  endedAt           DateTime?  @map("ended_at")
+  plannedDistanceKm Float?     @map("planned_distance_km")
+  actualDistanceKm  Float?     @map("actual_distance_km")
+  routePolyline     Json?      @map("route_polyline")
+  startLat          Float?     @map("start_lat")
+  startLng          Float?     @map("start_lng")
+  createdAt         DateTime   @default(now()) @map("created_at")
+  updatedAt         DateTime   @updatedAt @map("updated_at")
+
+  // Relations
+  group       Group        @relation(fields: [groupId], references: [id])
+  driver      User         @relation("DriverTrips", fields: [driverId], references: [id])
+  destination Destination? @relation(fields: [destinationId], references: [id])
+  stops       TripStop[]
+  events      TripEvent[]
+  attendance  Attendance[]
+
+  @@index([groupId])
+  @@index([driverId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("trips")
+}
+
+// ─────────────────────────────────────────────
+//  Trip Stops (Ordered Pickup Sequence)
+// ─────────────────────────────────────────────
+
+model TripStop {
+  id            String     @id @default(cuid())
+  tripId        String     @map("trip_id")
+  studentId     String     @map("student_id")
+  sequence      Int
+  lat           Float
+  lng           Float
+  address       String     @db.Text
+  plannedEta    DateTime?  @map("planned_eta")
+  actualArrival DateTime?  @map("actual_arrival")
+  status        StopStatus @default(PENDING)
+  notified5min  Boolean    @default(false) @map("notified_5min")
+  notified2min  Boolean    @default(false) @map("notified_2min")
+
+  // Relations
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId, sequence])
+  @@index([studentId])
+  @@map("trip_stops")
+}
+
+// ─────────────────────────────────────────────
+//  Trip Events (Audit / Replay Log)
+// ─────────────────────────────────────────────
+
+model TripEvent {
+  id        String        @id @default(cuid())
+  tripId    String        @map("trip_id")
+  type      TripEventType
+  lat       Float?
+  lng       Float?
+  metadata  Json?
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  // Relations
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId, createdAt])
+  @@index([type])
+  @@map("trip_events")
+}
+
+// ─────────────────────────────────────────────
+//  Notifications
+// ─────────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  title     String
+  body      String   @db.Text
+  type      String
+  isRead    Boolean  @default(false) @map("is_read")
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
