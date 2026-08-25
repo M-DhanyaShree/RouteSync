@@ -1,8 +1,8 @@
 import { z } from 'zod'
 
 export const startTripSchema = z.object({
-  groupId: z.string().cuid(),
-  destinationId: z.string().cuid().optional(),
+  groupId: z.string().min(1, 'Group ID is required'),
+  destinationId: z.string().min(1).optional(),
   startLat: z.number().min(-90).max(90),
   startLng: z.number().min(-180).max(180),
 })
