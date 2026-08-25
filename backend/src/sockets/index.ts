@@ -47,15 +47,25 @@ export function setupSockets(io: Server) {
     socket.on('leave:trip', (tripId: string) => socket.leave(tripRoom(tripId)))
 
     // Driver Location Update
-    socket.on('location:send', async (data: { tripId: string, lat: number, lng: number }) => {
+    socket.on('location:send', async (data: { tripId: string; lat: number; lng: number; speed?: number; heading?: number }) => {
       if (user.role !== 'DRIVER') return
 
       try {
-        await tripsService.handleLocationUpdate(data.tripId, user.userId, data.lat, data.lng)
+        await tripsService.handleLocationUpdate(data.tripId, user.userId, data.lat, data.lng, data.speed, data.heading)
       } catch (err) {
         logger.error('Failed to handle location update', { err: (err as Error).message })
       }
     })
+
+    // Driver Emergency SOS via socket
+    socket.on('emergency:send', async (data: { tripId: string; lat: number; lng: number; reason: string }) => {
+      try {
+        await tripsService.triggerEmergency(data.tripId, user.userId, data.lat, data.lng, data.reason || 'SOS Triggered')
+      } catch (err) {
+        logger.error('Failed to handle socket emergency', { err: (err as Error).message })
+      }
+    })
+
 
     socket.on('disconnect', () => {
       logger.info(`User disconnected: ${user.email} (${socket.id})`)

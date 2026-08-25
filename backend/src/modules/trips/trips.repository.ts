@@ -26,6 +26,7 @@ export class TripsRepository {
         lng: stop.lng,
         address: stop.address,
         plannedEta: stop.plannedEta,
+        status: 'PENDING',
       })),
     })
   }
@@ -46,6 +47,7 @@ export class TripsRepository {
       include: {
         stops: { orderBy: { sequence: 'asc' } },
         driver: { select: { id: true, name: true, phone: true } },
+        destination: true,
       },
     })
   }
@@ -81,6 +83,62 @@ export class TripsRepository {
       },
     })
   }
+
+  async logLocation(tripId: string, lat: number, lng: number, speed?: number, heading?: number) {
+    try {
+      return await prisma.locationLog.create({
+        data: {
+          tripId,
+          lat,
+          lng,
+          speed,
+          heading,
+        },
+      })
+    } catch {
+      // Non-blocking log
+      return null
+    }
+  }
+
+  async getLocationLogs(tripId: string) {
+    return prisma.locationLog.findMany({
+      where: { tripId },
+      orderBy: { recordedAt: 'asc' },
+    })
+  }
+
+  async getTripsHistory(whereClause: any, page = 1, limit = 20) {
+    const skip = (page - 1) * limit
+    const [trips, total] = await Promise.all([
+      prisma.trip.findMany({
+        where: whereClause,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          stops: { orderBy: { sequence: 'asc' } },
+          driver: { select: { id: true, name: true, phone: true } },
+          destination: true,
+        },
+      }),
+      prisma.trip.count({ where: whereClause }),
+    ])
+
+    return { trips, total, page, limit, totalPages: Math.ceil(total / limit) }
+  }
+
+  async getAllActiveTrips() {
+    return prisma.trip.findMany({
+      where: { status: 'ACTIVE' },
+      include: {
+        stops: { orderBy: { sequence: 'asc' } },
+        driver: { select: { id: true, name: true, phone: true } },
+        destination: true,
+      },
+    })
+  }
 }
 
 export const tripsRepository = new TripsRepository()
+

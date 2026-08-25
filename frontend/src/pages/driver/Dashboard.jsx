@@ -101,26 +101,29 @@ const DriverDashboard = () => {
 
   const handleMarkStop = async (stopId, status) => {
     if (!activeTrip) return
-    const socket = getSocket()
-    if (socket) {
-      socket.emit('trip:mark_stop', {
-        tripId: activeTrip.id,
-        stopId,
+    try {
+      // API call to persist
+      await api.put(`/trips/${activeTrip.id}/stops/${stopId}/status`, {
         status,
+        actualLat: vanLocation.lat,
+        actualLng: vanLocation.lng,
       })
-    }
 
-    // Optimistic update
-    setActiveTrip(prev => {
-      if (!prev) return prev
-      const updatedStops = (prev.stops || []).map(s => (s.id === stopId ? { ...s, status } : s))
-      return { ...prev, stops: updatedStops }
-    })
+      // Optimistic update
+      setActiveTrip((prev) => {
+        if (!prev) return prev
+        const updatedStops = (prev.stops || []).map((s) => (s.id === stopId ? { ...s, status } : s))
+        return { ...prev, stops: updatedStops }
+      })
+    } catch (err) {
+      console.error('Failed to update stop status:', err)
+      alert(err.response?.data?.message || 'Failed to update stop')
+    }
   }
 
   const handleSimulateMovement = () => {
     if (!activeTrip || !activeTrip.stops) return
-    const pendingStop = activeTrip.stops.find(s => s.status === 'PENDING')
+    const pendingStop = activeTrip.stops.find((s) => s.status === 'PENDING')
     let targetLat = vanLocation.lat + (Math.random() - 0.5) * 0.005
     let targetLng = vanLocation.lng + (Math.random() - 0.5) * 0.005
 
@@ -134,11 +137,11 @@ const DriverDashboard = () => {
 
     const socket = getSocket()
     if (socket) {
-      socket.emit('driver:location_update', {
+      socket.emit('location:send', {
         tripId: activeTrip.id,
         lat: targetLat,
         lng: targetLng,
-        speed: 32,
+        speed: 35,
         heading: 90,
       })
     }
@@ -146,13 +149,33 @@ const DriverDashboard = () => {
 
   const handleCompleteTrip = async () => {
     if (!activeTrip) return
-    const socket = getSocket()
-    if (socket) {
-      socket.emit('trip:end', { tripId: activeTrip.id })
+    if (!window.confirm('Are you sure you want to complete this route?')) return
+    try {
+      await api.post(`/trips/${activeTrip.id}/end`)
+      setActiveTrip(null)
+      loadData()
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to complete trip')
     }
-    setActiveTrip(null)
-    loadData()
   }
+
+  const handleTriggerEmergency = async () => {
+    if (!activeTrip) return
+    const reason = prompt('Please enter emergency reason (e.g., breakdown, accident, medical):', 'Vehicle mechanical breakdown')
+    if (!reason) return
+
+    try {
+      await api.post(`/trips/${activeTrip.id}/emergency`, {
+        lat: vanLocation.lat,
+        lng: vanLocation.lng,
+        reason,
+      })
+      alert('🚨 EMERGENCY SOS BROADCASTED TO FLEET & PARENTS!')
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to dispatch SOS')
+    }
+  }
+
 
   const presentCount = todayAttendance.filter(a => a.status === 'PRESENT').length
   const absentCount = todayAttendance.filter(a => a.status === 'ABSENT').length
@@ -233,10 +256,14 @@ const DriverDashboard = () => {
                 <Button size="sm" variant="secondary" onClick={handleSimulateMovement} className="text-xs gap-1.5">
                   <Navigation size={14} /> Send GPS Ping
                 </Button>
+                <Button size="sm" onClick={handleTriggerEmergency} className="text-xs gap-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold border-0">
+                  <AlertCircle size={14} /> SOS Alert
+                </Button>
                 <Button size="sm" variant="destructive" onClick={handleCompleteTrip} className="text-xs gap-1.5 bg-red-700 hover:bg-red-800">
                   <Flag size={14} /> Complete Route
                 </Button>
               </div>
+
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 p-6">

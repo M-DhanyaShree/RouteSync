@@ -37,6 +37,21 @@ export class AuthController {
       res.json(ok('Profile fetched', user))
     } catch (err) { next(err) }
   }
+
+  async updateLocation(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const location = await authService.updateLocation(req.user!.userId, req.body)
+      res.json(ok('Pickup location updated successfully', location))
+    } catch (err) { next(err) }
+  }
+
+  async getLocation(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const location = await authService.getLocation(req.user!.userId)
+      res.json(ok('Pickup location fetched', location))
+    } catch (err) { next(err) }
+  }
 }
+
 
 export const authController = new AuthController()

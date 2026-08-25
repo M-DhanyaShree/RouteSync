@@ -34,6 +34,15 @@ export const resetPasswordSchema = z.object({
     .regex(/[0-9]/),
 })
 
+export const updateLocationSchema = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  address: z.string().min(1, 'Address is required'),
+  label: z.string().optional().default('Home Pickup Point'),
+})
+
 export type RegisterDto = z.infer<typeof registerSchema>
 export type LoginDto = z.infer<typeof loginSchema>
 export type RefreshDto = z.infer<typeof refreshSchema>
+export type UpdateLocationDto = z.infer<typeof updateLocationSchema>
+

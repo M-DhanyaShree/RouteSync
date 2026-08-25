@@ -18,6 +18,8 @@ import authRoutes from './modules/auth/auth.routes'
 import groupRoutes from './modules/groups/groups.routes'
 import attendanceRoutes from './modules/attendance/attendance.routes'
 import tripRoutes from './modules/trips/trips.routes'
+import analyticsRoutes from './modules/analytics/analytics.routes'
+
 
 async function startServer() {
   const app = express()
@@ -59,6 +61,8 @@ async function startServer() {
   app.use('/api/groups', groupRoutes)
   app.use('/api/attendance', attendanceRoutes)
   app.use('/api/trips', tripRoutes)
+  app.use('/api/analytics', analyticsRoutes)
+
 
   // Setup Socket.IO
   setupSockets(io)

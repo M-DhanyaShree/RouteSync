@@ -6,8 +6,10 @@ import { MapPin, Clock, Calendar, Check, X, Phone, Navigation, ShieldCheck, Aler
 import api from '../../api/axios'
 import { getSocket } from '../../lib/socket'
 import LiveMap from '../../components/map/LiveMap'
+import { showNotification } from '../../lib/notifications'
 
 const StudentHome = () => {
+
   const { user } = useAuthStore()
   const [attendance, setAttendance] = useState(null)
   const [group, setGroup] = useState(null)
@@ -66,10 +68,13 @@ const StudentHome = () => {
     socket.emit('join:group', group.id)
 
     const handleTripStarted = ({ tripId }) => {
-      api.get(`/trips/${tripId}`).then(res => {
+      showNotification('Van Route Started 🚐', {
+        body: `Driver has started the morning route for ${group.name}. Check your live ETA!`,
+      })
+      api.get(`/trips/${tripId}`).then((res) => {
         const trip = res.data.data
         setActiveTrip(trip)
-        const myStop = trip.stops?.find(s => s.studentId === user.id)
+        const myStop = trip.stops?.find((s) => s.studentId === user.id)
         if (myStop?.plannedEta) {
           const diffMin = Math.max(1, Math.round((new Date(myStop.plannedEta).getTime() - Date.now()) / (1000 * 60)))
           setEtaMinutes(diffMin)
@@ -84,30 +89,60 @@ const StudentHome = () => {
       }
     }
 
-    const handleStopArrived = (data) => {
+    const handleStopUpdate = (data) => {
       if (data.studentId === user.id) {
-        alert('🎉 Van has arrived at your pickup spot!')
+        if (data.status === 'ARRIVED') {
+          showNotification('Van Arrived! 📍', {
+            body: 'The van has arrived at your pickup spot. Please board immediately.',
+          })
+        }
+      }
+      if (data.tripId) {
+        api.get(`/trips/${data.tripId}`).then((res) => setActiveTrip(res.data.data))
       }
     }
 
+    const handleGeofence = (data) => {
+      if (data.studentId === user.id) {
+        showNotification('Van Approaching! ⏳', {
+          body: 'Your van is within 500 meters of your pickup spot (~2 mins).',
+        })
+      }
+    }
+
+    const handleEmergency = (data) => {
+      showNotification('⚠️ Transport SOS Alert', {
+        body: `Emergency reported by driver: ${data.reason || 'Assistance dispatched'}`,
+      })
+      alert(`⚠️ EMERGENCY ALERT: Driver triggered SOS. Reason: ${data.reason || 'Assistance requested'}`)
+    }
+
     const handleTripEnded = () => {
+      showNotification('Trip Completed ✅', {
+        body: 'Morning transport route has safely concluded.',
+      })
       setActiveTrip(null)
       setDriverLocation(null)
       loadData()
     }
 
     socket.on('trip:started', handleTripStarted)
-    socket.on('trip:location_updated', handleLocationUpdate)
-    socket.on('trip:stop_arrived', handleStopArrived)
-    socket.on('trip:ended', handleTripEnded)
+    socket.on('location:update', handleLocationUpdate)
+    socket.on('trip:stop_update', handleStopUpdate)
+    socket.on('trip:geofence_entered', handleGeofence)
+    socket.on('trip:emergency', handleEmergency)
+    socket.on('trip:completed', handleTripEnded)
 
     return () => {
       socket.off('trip:started', handleTripStarted)
-      socket.off('trip:location_updated', handleLocationUpdate)
-      socket.off('trip:stop_arrived', handleStopArrived)
-      socket.off('trip:ended', handleTripEnded)
+      socket.off('location:update', handleLocationUpdate)
+      socket.off('trip:stop_update', handleStopUpdate)
+      socket.off('trip:geofence_entered', handleGeofence)
+      socket.off('trip:emergency', handleEmergency)
+      socket.off('trip:completed', handleTripEnded)
     }
   }, [group, user])
+
 
   const handleMarkAttendance = async (status) => {
     if (!group) return

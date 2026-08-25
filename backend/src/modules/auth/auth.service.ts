@@ -1,10 +1,11 @@
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { authRepository } from './auth.repository'
-import { RegisterDto, LoginDto } from './auth.dto'
+import { RegisterDto, LoginDto, UpdateLocationDto } from './auth.dto'
 import { env } from '../../config/env'
 import { AppError } from '../../middleware/error.middleware'
 import { JwtAccessPayload, JwtRefreshPayload, User } from '../../shared/types/api.types'
+import { prisma } from '../../config/database'
 
 function generateAccessToken(user: User): string {
   const payload: JwtAccessPayload = { userId: user.id, role: user.role, email: user.email }
@@ -28,6 +29,21 @@ export class AuthService {
 
     const passwordHash = await bcrypt.hash(dto.password, 10)
     const user = await authRepository.create({ ...dto, passwordHash })
+
+    // If student, create default student profile
+    if (user.role === 'STUDENT') {
+      try {
+        await prisma.location.create({
+          data: {
+            userId: user.id,
+            lat: 12.9716,
+            lng: 77.5946,
+            address: 'Bengaluru Central',
+            isDefault: true,
+          },
+        })
+      } catch {}
+    }
 
     const accessToken = generateAccessToken(user)
     const refreshToken = generateRefreshToken(user)
@@ -78,8 +94,49 @@ export class AuthService {
   async getMe(userId: string) {
     const user = await authRepository.findById(userId)
     if (!user) throw new AppError('User not found', 404)
-    return sanitizeUser(user)
+    const loc = await prisma.location.findFirst({ where: { userId, isDefault: true } })
+    return { ...sanitizeUser(user), location: loc }
+  }
+
+  async updateLocation(userId: string, dto: UpdateLocationDto) {
+    const existing = await prisma.location.findFirst({ where: { userId, isDefault: true } })
+    if (existing) {
+      return prisma.location.update({
+        where: { id: existing.id },
+        data: {
+          lat: dto.lat,
+          lng: dto.lng,
+          address: dto.address,
+          label: dto.label || 'Home Pickup Point',
+        },
+      })
+    } else {
+      return prisma.location.create({
+        data: {
+          userId,
+          lat: dto.lat,
+          lng: dto.lng,
+          address: dto.address,
+          label: dto.label || 'Home Pickup Point',
+          isDefault: true,
+        },
+      })
+    }
+  }
+
+  async getLocation(userId: string) {
+    const loc = await prisma.location.findFirst({ where: { userId, isDefault: true } })
+    if (!loc) {
+      return {
+        lat: 12.9716,
+        lng: 77.5946,
+        address: 'MG Road, Bengaluru',
+        label: 'Default Pickup Spot',
+      }
+    }
+    return loc
   }
 }
 
 export const authService = new AuthService()
+

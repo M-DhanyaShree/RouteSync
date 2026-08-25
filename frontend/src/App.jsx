@@ -12,12 +12,17 @@ import Login from './pages/auth/Login'
 
 // Driver Pages
 import DriverDashboard from './pages/driver/Dashboard'
+import DriverGroups from './pages/driver/Groups'
 
 // Student Pages
 import StudentHome from './pages/student/Home'
+import StudentGroups from './pages/student/Groups'
+import StudentSettings from './pages/student/Settings'
 
 // Admin Pages
 import AdminDashboard from './pages/admin/Dashboard'
+import AdminFleet from './pages/admin/Fleet'
+
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -71,6 +76,7 @@ function App() {
         </ProtectedRoute>
       }>
         <Route index element={<DriverDashboard />} />
+        <Route path="groups" element={<DriverGroups />} />
       </Route>
 
       {/* Student Routes */}
@@ -80,6 +86,8 @@ function App() {
         </ProtectedRoute>
       }>
         <Route index element={<StudentHome />} />
+        <Route path="groups" element={<StudentGroups />} />
+        <Route path="settings" element={<StudentSettings />} />
       </Route>
 
       {/* Admin Routes */}
@@ -89,7 +97,9 @@ function App() {
         </ProtectedRoute>
       }>
         <Route index element={<AdminDashboard />} />
+        <Route path="fleet" element={<AdminFleet />} />
       </Route>
+
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/login" replace />} />
