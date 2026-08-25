@@ -6,6 +6,7 @@ import { Users, Play, Clock, CheckCircle, Navigation, MapPin, Check, SkipForward
 import api from '../../api/axios'
 import { getSocket } from '../../lib/socket'
 import LiveMap from '../../components/map/LiveMap'
+import LocationAutocomplete, { COIMBATORE_LANDMARKS } from '../../components/ui/LocationAutocomplete'
 
 const DriverDashboard = () => {
   const { user } = useAuthStore()
@@ -15,8 +16,9 @@ const DriverDashboard = () => {
   const [activeTrip, setActiveTrip] = useState(null)
   const [loading, setLoading] = useState(true)
   const [startingTrip, setStartingTrip] = useState(false)
-  const [vanLocation, setVanLocation] = useState({ lat: 12.9141, lng: 77.6101 })
-  const [actionLoading, setActionLoading] = useState(false)
+  // Default coordinates: Gandhipuram, Coimbatore, Tamil Nadu
+  const [vanLocation, setVanLocation] = useState({ lat: 11.0183, lng: 76.9644 })
+  const [lateAbsenceAlert, setLateAbsenceAlert] = useState(null)
 
   // Fetch driver groups
   const loadData = async () => {
@@ -53,25 +55,48 @@ const DriverDashboard = () => {
     loadData()
   }, [])
 
-  // Socket listener for real-time events
+  // Socket listener for real-time events (attendance changes, late absence re-optimization, etc.)
   useEffect(() => {
     const socket = getSocket()
     if (!socket || !selectedGroup) return
 
     socket.emit('join:group', selectedGroup.id)
+    if (activeTrip?.id) {
+      socket.emit('join:trip', activeTrip.id)
+    }
 
     const handleAttendanceChange = () => {
-      api.get(`/attendance/group/${selectedGroup.id}/today`).then(res => {
+      api.get(`/attendance/group/${selectedGroup.id}/today`).then((res) => {
         setTodayAttendance(res.data.data || [])
       })
     }
 
+    const handleTripRecalculated = (data) => {
+      if (data.updatedTrip) {
+        setActiveTrip(data.updatedTrip)
+      } else if (data.tripId) {
+        api.get(`/trips/${data.tripId}`).then((res) => setActiveTrip(res.data.data))
+      }
+      setLateAbsenceAlert('Student informed late absence. Route automatically re-optimized and stop skipped.')
+      setTimeout(() => setLateAbsenceAlert(null), 6000)
+    }
+
+    const handleStopUpdate = (data) => {
+      if (data.recalculated && data.updatedTrip) {
+        setActiveTrip(data.updatedTrip)
+      }
+    }
+
     socket.on('attendance:changed', handleAttendanceChange)
+    socket.on('trip:recalculated', handleTripRecalculated)
+    socket.on('trip:stop_update', handleStopUpdate)
 
     return () => {
       socket.off('attendance:changed', handleAttendanceChange)
+      socket.off('trip:recalculated', handleTripRecalculated)
+      socket.off('trip:stop_update', handleStopUpdate)
     }
-  }, [selectedGroup])
+  }, [selectedGroup, activeTrip?.id])
 
   const handleStartTrip = async (group) => {
     try {
@@ -102,7 +127,6 @@ const DriverDashboard = () => {
   const handleMarkStop = async (stopId, status) => {
     if (!activeTrip) return
     try {
-      // API call to persist
       await api.put(`/trips/${activeTrip.id}/stops/${stopId}/status`, {
         status,
         actualLat: vanLocation.lat,
@@ -176,31 +200,46 @@ const DriverDashboard = () => {
     }
   }
 
+  const presentCount = todayAttendance.filter((a) => a.status === 'PRESENT').length
 
-  const presentCount = todayAttendance.filter(a => a.status === 'PRESENT').length
-  const absentCount = todayAttendance.filter(a => a.status === 'ABSENT').length
-
-  const stops = activeTrip?.stops?.map(s => ({
-    id: s.id,
-    name: s.student?.name || `Stop #${s.sequence + 1}`,
-    address: s.address || `Lat: ${s.lat}, Lng: ${s.lng}`,
-    lat: s.lat,
-    lng: s.lng,
-    status: s.status,
-    plannedEta: s.plannedEta,
-  })) || []
+  const stops =
+    activeTrip?.stops?.map((s) => ({
+      id: s.id,
+      name: s.student?.name || `Stop #${(s.sequence ?? 0) + 1}`,
+      address: s.address || `Lat: ${s.lat}, Lng: ${s.lng}`,
+      lat: s.lat,
+      lng: s.lng,
+      status: s.status,
+      sequence: s.sequence,
+      plannedEta: s.plannedEta,
+    })) || []
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Good morning, {user?.name}</h1>
-          <p className="text-slate-500 dark:text-slate-400">Driver Console • {selectedGroup?.name || 'Loading route...'}</p>
+          <p className="text-slate-500 dark:text-slate-400">
+            Driver Console • {selectedGroup?.name || 'Coimbatore Metro Route'} • Coimbatore, Tamil Nadu
+          </p>
         </div>
         <Button variant="outline" size="sm" onClick={loadData} className="gap-2 self-start sm:self-auto">
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
         </Button>
       </div>
+
+      {/* Late Absence Live Notice */}
+      {lateAbsenceAlert && (
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm flex items-center justify-between animate-fade-in shadow-lg">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={18} className="text-amber-400 flex-shrink-0" />
+            <span>{lateAbsenceAlert}</span>
+          </div>
+          <button onClick={() => setLateAbsenceAlert(null)} className="text-xs text-amber-400 underline">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Metrics Header */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -223,7 +262,9 @@ const DriverDashboard = () => {
             </div>
             <div>
               <p className="text-sm text-slate-500 font-medium">Students Present Today</p>
-              <p className="text-2xl font-bold">{presentCount} <span className="text-xs text-slate-400 font-normal">/ {todayAttendance.length}</span></p>
+              <p className="text-2xl font-bold">
+                {presentCount} <span className="text-xs text-slate-400 font-normal">/ {todayAttendance.length}</span>
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -236,7 +277,7 @@ const DriverDashboard = () => {
             <div>
               <p className="text-sm text-slate-500 font-medium">Trip Status</p>
               <p className="text-2xl font-bold capitalize text-brand-500">
-                {activeTrip ? 'In Progress' : 'Ready'}
+                {activeTrip ? 'In Progress (Live GPS)' : 'Ready in Coimbatore'}
               </p>
             </div>
           </CardContent>
@@ -250,75 +291,95 @@ const DriverDashboard = () => {
             <div className="bg-brand-500 text-white p-4 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 bg-white rounded-full animate-ping" />
-                <span className="font-bold text-lg">Active Trip In Progress</span>
+                <span className="font-bold text-lg">Active Coimbatore Route In Progress</span>
               </div>
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="secondary" onClick={handleSimulateMovement} className="text-xs gap-1.5">
                   <Navigation size={14} /> Send GPS Ping
                 </Button>
-                <Button size="sm" onClick={handleTriggerEmergency} className="text-xs gap-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold border-0">
+                <Button
+                  size="sm"
+                  onClick={handleTriggerEmergency}
+                  className="text-xs gap-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold border-0"
+                >
                   <AlertCircle size={14} /> SOS Alert
                 </Button>
-                <Button size="sm" variant="destructive" onClick={handleCompleteTrip} className="text-xs gap-1.5 bg-red-700 hover:bg-red-800">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={handleCompleteTrip}
+                  className="text-xs gap-1.5 bg-red-700 hover:bg-red-800"
+                >
                   <Flag size={14} /> Complete Route
                 </Button>
               </div>
-
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 p-6">
               {/* Left Column: Stops checklist */}
               <div className="lg:col-span-5 space-y-4">
                 <h3 className="font-semibold text-lg flex items-center justify-between">
-                  <span>Optimized Stops ({activeTrip.stops?.length || 0})</span>
-                  <span className="text-xs text-slate-500">{activeTrip.plannedDistanceKm || 8.4} km total</span>
+                  <span>Optimized Stops ({stops.filter((s) => s.status !== 'SKIPPED').length})</span>
+                  <span className="text-xs text-brand-400 font-semibold">{activeTrip.plannedDistanceKm || 9.2} km total</span>
                 </h3>
 
                 <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
-                  {activeTrip.stops?.map((stop, index) => {
+                  {stops.map((stop, index) => {
                     const isArrived = stop.status === 'ARRIVED'
+                    const isPickedUp = stop.status === 'PICKED_UP'
                     const isSkipped = stop.status === 'SKIPPED'
                     return (
                       <div
                         key={stop.id}
                         className={`p-3.5 rounded-xl border transition-all ${
-                          isArrived
+                          isPickedUp || isArrived
                             ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
                             : isSkipped
-                            ? 'bg-slate-800/40 border-slate-700/50 opacity-60'
+                            ? 'bg-slate-800/40 border-slate-700/50 opacity-50'
                             : 'bg-slate-900/60 border-slate-700 hover:border-brand-500/50'
                         }`}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-start gap-2.5">
-                            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-brand-500/20 text-brand-400 font-bold text-xs mt-0.5">
-                              {index + 1}
+                            <span
+                              className={`flex items-center justify-center w-6 h-6 rounded-full font-bold text-xs mt-0.5 ${
+                                isPickedUp
+                                  ? 'bg-emerald-500 text-white'
+                                  : isSkipped
+                                  ? 'bg-slate-700 text-slate-400'
+                                  : 'bg-brand-500/20 text-brand-400'
+                              }`}
+                            >
+                              {isSkipped ? '✕' : index + 1}
                             </span>
                             <div>
-                              <p className="font-medium text-sm text-slate-100">{stop.student?.name || `Student Stop #${index + 1}`}</p>
+                              <p className="font-medium text-sm text-slate-100">{stop.name}</p>
                               <p className="text-xs text-slate-400 truncate max-w-[200px]">{stop.address}</p>
-                              {stop.plannedEta && (
+                              {stop.plannedEta && !isSkipped && (
                                 <p className="text-xs text-brand-400 mt-1 flex items-center gap-1">
-                                  <Clock size={12} /> ETA: {new Date(stop.plannedEta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  <Clock size={12} /> ETA:{' '}
+                                  {new Date(stop.plannedEta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                 </p>
                               )}
+                              {isSkipped && <p className="text-[11px] text-red-400 mt-0.5">Absent - Stop Skipped</p>}
                             </div>
                           </div>
 
-                          {!isArrived && !isSkipped && (
+                          {!isPickedUp && !isArrived && !isSkipped && (
                             <div className="flex gap-1">
                               <Button
                                 size="sm"
                                 variant="default"
                                 className="h-8 px-2.5 text-xs bg-emerald-600 hover:bg-emerald-500"
-                                onClick={() => handleMarkStop(stop.id, 'ARRIVED')}
+                                onClick={() => handleMarkStop(stop.id, 'PICKED_UP')}
                               >
                                 <Check size={14} className="mr-1" /> Picked
                               </Button>
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="h-8 px-2 text-xs"
+                                className="h-8 px-2 text-xs border-slate-700 hover:bg-slate-800"
+                                title="Skip stop"
                                 onClick={() => handleMarkStop(stop.id, 'SKIPPED')}
                               >
                                 <SkipForward size={14} />
@@ -326,25 +387,37 @@ const DriverDashboard = () => {
                             </div>
                           )}
 
-                          {isArrived && <span className="text-xs text-emerald-400 font-medium px-2 py-1 bg-emerald-950/60 rounded">Picked up</span>}
-                          {isSkipped && <span className="text-xs text-slate-400 font-medium px-2 py-1 bg-slate-800 rounded">Skipped</span>}
+                          {isPickedUp && (
+                            <span className="text-xs text-emerald-400 font-medium px-2 py-1 bg-emerald-950/60 rounded">
+                              ✓ Picked Up
+                            </span>
+                          )}
+                          {isSkipped && (
+                            <span className="text-xs text-slate-400 font-medium px-2 py-1 bg-slate-800 rounded">
+                              Skipped
+                            </span>
+                          )}
                         </div>
                       </div>
                     )
                   })}
 
                   {/* Destination */}
-                  <div className="p-3.5 rounded-xl border border-dashed border-brand-500/40 bg-brand-500/5">
-                    <div className="flex items-center gap-2 text-brand-400 font-medium text-sm">
-                      <MapPin size={16} /> Destination: {selectedGroup?.destinations?.[0]?.name || 'School Campus'}
+                  <div className="p-3.5 rounded-xl border border-dashed border-purple-500/40 bg-purple-500/5">
+                    <div className="flex items-center gap-2 text-purple-400 font-medium text-sm">
+                      <MapPin size={16} /> Destination: {selectedGroup?.destinations?.[0]?.name || 'PSG Tech & Sarvajana Campus'}
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Right Column: Live Map */}
+              {/* Right Column: Live Map with Blue Path */}
               <div className="lg:col-span-7 h-[450px]">
-                <LiveMap driverLocation={vanLocation} stops={stops} />
+                <LiveMap
+                  driverLocation={vanLocation}
+                  stops={stops}
+                  destination={selectedGroup?.destinations?.[0]}
+                />
               </div>
             </div>
           </Card>
@@ -353,14 +426,16 @@ const DriverDashboard = () => {
         /* Pre-trip Route & Attendance Summary */
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
-            <h2 className="text-xl font-semibold">Your Assigned Route</h2>
-            {groups.map(group => (
+            <h2 className="text-xl font-semibold">Your Assigned Coimbatore Route</h2>
+            {groups.map((group) => (
               <Card key={group.id} className="border-slate-700 bg-slate-900/40">
                 <CardHeader>
                   <div className="flex justify-between items-start">
                     <div>
                       <CardTitle className="text-lg text-slate-100">{group.name}</CardTitle>
-                      <p className="text-xs text-slate-400 mt-1">Code: <span className="font-mono text-brand-400">{group.inviteCode}</span></p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Code: <span className="font-mono text-brand-400">{group.inviteCode}</span>
+                      </p>
                     </div>
                     <span className="px-2.5 py-1 bg-brand-500/20 text-brand-400 rounded-full text-xs font-semibold">
                       {group._count?.members || group.members?.length || 5} Enrolled
@@ -369,10 +444,12 @@ const DriverDashboard = () => {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <p className="text-sm text-slate-300">{group.description}</p>
-                  
+
                   <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center justify-between text-sm">
                     <span className="text-slate-400">Destination:</span>
-                    <span className="font-medium text-slate-200">{group.destinations?.[0]?.name || 'Greenwood Public School'}</span>
+                    <span className="font-medium text-slate-200">
+                      {group.destinations?.[0]?.name || 'PSG Tech & Sarvajana Campus, Peelamedu'}
+                    </span>
                   </div>
 
                   <div className="pt-2">
@@ -381,7 +458,7 @@ const DriverDashboard = () => {
                       disabled={startingTrip || presentCount === 0}
                       onClick={() => handleStartTrip(group)}
                     >
-                      <Play size={18} /> {startingTrip ? 'Optimizing & Starting...' : `Start Morning Route (${presentCount} Present)`}
+                      <Play size={18} /> {startingTrip ? 'Optimizing 2-Opt Route...' : `Start Morning Route (${presentCount} Present)`}
                     </Button>
                     {presentCount === 0 && (
                       <p className="text-xs text-amber-400 text-center mt-2 flex items-center justify-center gap-1">
@@ -417,13 +494,15 @@ const DriverDashboard = () => {
                           <p className="text-[10px] text-slate-400">{item.student?.phone || 'No phone'}</p>
                         </div>
                       </div>
-                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
-                        item.status === 'PRESENT'
-                          ? 'bg-emerald-500/20 text-emerald-400'
-                          : item.status === 'ABSENT'
-                          ? 'bg-red-500/20 text-red-400'
-                          : 'bg-slate-700 text-slate-300'
-                      }`}>
+                      <span
+                        className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                          item.status === 'PRESENT'
+                            ? 'bg-emerald-500/20 text-emerald-400'
+                            : item.status === 'ABSENT'
+                            ? 'bg-red-500/20 text-red-400'
+                            : 'bg-slate-700 text-slate-300'
+                        }`}
+                      >
                         {item.status}
                       </span>
                     </div>

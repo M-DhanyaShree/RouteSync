@@ -342,6 +342,95 @@ export class TripsService {
       actualPathCoordinates: logs.map((l: any) => ({ lat: l.lat, lng: l.lng, time: l.recordedAt })),
     }
   }
+
+  async handleLateAbsence(groupId: string, studentId: string) {
+    const activeTrip = await tripsRepository.getActiveTripByGroup(groupId)
+    if (!activeTrip) return null
+
+    // Find the student's stop
+    const stop = activeTrip.stops?.find((s: any) => s.studentId === studentId)
+    if (!stop) return null
+
+    // If stop was already visited (ARRIVED or PICKED_UP), don't alter history
+    if (stop.status !== 'PENDING') return null
+
+    // 1. Mark stop as SKIPPED
+    await tripsRepository.updateStop(stop.id, { status: 'SKIPPED' })
+    await tripsRepository.recordEvent(activeTrip.id, 'LATE_ABSENCE_SKIPPED', {
+      studentId,
+      stopId: stop.id,
+      reason: 'Student informed late absence',
+    })
+
+    // 2. Re-optimize remaining PENDING stops
+    const remainingPendingStops = (activeTrip.stops || []).filter((s: any) => s.studentId !== studentId && s.status === 'PENDING')
+    const completedStops = (activeTrip.stops || []).filter((s: any) => s.status === 'PICKED_UP' || s.status === 'ARRIVED')
+
+    // Origin for re-optimization: latest completed stop or trip start position
+    const lastVisited = completedStops.length > 0 ? completedStops[completedStops.length - 1] : { lat: activeTrip.startLat, lng: activeTrip.startLng }
+    const destinationLoc = activeTrip.destination || { lat: activeTrip.startLat + 0.04, lng: activeTrip.startLng + 0.04 }
+
+    let reorderedStops = remainingPendingStops
+    if (remainingPendingStops.length > 1) {
+      const optimizer = createOptimizer('2-opt')
+      const optResult = await optimizer.optimize({
+        origin: { lat: lastVisited.lat, lng: lastVisited.lng },
+        stops: remainingPendingStops,
+        destination: { lat: destinationLoc.lat, lng: destinationLoc.lng },
+      })
+      reorderedStops = optResult.orderedStops
+    }
+
+    // 3. Recalculate ETAs for remaining stops
+    const baseTime = new Date()
+    const etas = await etaEngine.calculateETAs(
+      { lat: lastVisited.lat, lng: lastVisited.lng },
+      reorderedStops.map((s: any, idx: number) => ({ ...s, sequence: completedStops.length + idx })),
+      baseTime
+    )
+
+    // 4. Update sequence and planned ETAs in DB
+    for (let i = 0; i < reorderedStops.length; i++) {
+      const st = reorderedStops[i]
+      const etaObj = etas.find((e: any) => e.studentId === st.studentId)
+      await tripsRepository.updateStop(st.id, {
+        sequence: completedStops.length + i,
+        plannedEta: etaObj ? etaObj.plannedEta : null,
+      })
+    }
+
+    // 5. Broadcast to trip & group so driver & students instantly see the optimized route
+    const updatedTrip = await tripsRepository.getTripById(activeTrip.id)
+    broadcastToTrip(activeTrip.id, 'trip:stop_update', {
+      tripId: activeTrip.id,
+      stopId: stop.id,
+      studentId,
+      status: 'SKIPPED',
+      recalculated: true,
+      updatedTrip,
+    })
+    broadcastToGroup(groupId, 'trip:stop_update', {
+      tripId: activeTrip.id,
+      stopId: stop.id,
+      studentId,
+      status: 'SKIPPED',
+      recalculated: true,
+      updatedTrip,
+    })
+    broadcastToTrip(activeTrip.id, 'trip:recalculated', { tripId: activeTrip.id, updatedTrip })
+    broadcastToGroup(groupId, 'trip:recalculated', { tripId: activeTrip.id, updatedTrip })
+
+    // 6. Send push notification to Driver
+    notificationService.send({
+      userId: activeTrip.driverId,
+      type: 'TRIP_UPDATE',
+      title: 'Route Re-Optimized: Late Absence',
+      body: `A student reported absent. Stop skipped and route dynamically recalculated.`,
+      metadata: { tripId: activeTrip.id, studentId },
+    })
+
+    return updatedTrip
+  }
 }
 
 export const tripsService = new TripsService()

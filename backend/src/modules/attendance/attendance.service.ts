@@ -3,6 +3,8 @@ import { groupsRepository } from '../groups/groups.repository'
 import { AppError } from '../../middleware/error.middleware'
 import { MarkAttendanceDto } from './attendance.dto'
 import { broadcastToGroup } from '../../shared/services/socket.service'
+import { tripsService } from '../trips/trips.service'
+import { tripsRepository } from '../trips/trips.repository'
 
 export class AttendanceService {
   async markAttendance(studentId: string, dto: MarkAttendanceDto) {
@@ -13,16 +15,22 @@ export class AttendanceService {
     const date = dto.date ? new Date(dto.date) : new Date()
     date.setHours(0, 0, 0, 0)
 
-    // Check if locked
-    const locked = await attendanceRepository.isLocked(dto.groupId, date)
-    if (locked) throw new AppError('Attendance is locked for today — the trip has started', 400)
-
+    // Save/Update attendance record
     const record = await attendanceRepository.upsert({
       groupId: dto.groupId,
       studentId,
       date,
       status: dto.status,
     })
+
+    // If student informs ABSENT (even late or during active trip), dynamically re-optimize route!
+    if (dto.status === 'ABSENT') {
+      try {
+        await tripsService.handleLateAbsence(dto.groupId, studentId)
+      } catch (err) {
+        console.error('Error handling late absence dynamic route re-optimization:', err)
+      }
+    }
 
     // Broadcast change to the group room
     broadcastToGroup(dto.groupId, 'attendance:changed', {

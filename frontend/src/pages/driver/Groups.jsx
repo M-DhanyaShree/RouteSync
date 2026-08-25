@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Ca
 import { Button } from '../../components/ui/Button'
 import { Users, Plus, Hash, MapPin, Copy, Check, RefreshCw, X, Shield } from 'lucide-react'
 import api from '../../api/axios'
+import LocationAutocomplete, { COIMBATORE_LANDMARKS } from '../../components/ui/LocationAutocomplete'
 
 const DriverGroups = () => {
   const [groups, setGroups] = useState([])
@@ -14,9 +15,9 @@ const DriverGroups = () => {
   // Form State
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [destinationName, setDestinationName] = useState('Greenwood High International School')
-  const [destLat, setDestLat] = useState(12.9863)
-  const [destLng, setDestLng] = useState(77.7342)
+  const [destinationName, setDestinationName] = useState('PSG Tech & Sarvajana Campus, Peelamedu')
+  const [destLat, setDestLat] = useState(11.0240)
+  const [destLng, setDestLng] = useState(77.0028)
 
   const fetchGroups = async () => {
     try {
@@ -38,6 +39,12 @@ const DriverGroups = () => {
     navigator.clipboard.writeText(code)
     setCopiedCode(code)
     setTimeout(() => setCopiedCode(null), 2000)
+  }
+
+  const handleDestinationSelect = (loc) => {
+    setDestinationName(loc.address || loc.name)
+    setDestLat(loc.lat)
+    setDestLng(loc.lng)
   }
 
   const handleCreateGroup = async (e) => {
@@ -71,9 +78,9 @@ const DriverGroups = () => {
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 font-display">Manage Van Groups & Routes</h1>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 font-display">Manage Coimbatore Van Groups & Routes</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Create transport groups, distribute invite codes to students/parents, and set route drop destinations.
+            Create transport groups, distribute invite codes to students/parents, and configure drop destinations in Coimbatore.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -94,7 +101,7 @@ const DriverGroups = () => {
               <div className="flex justify-between items-start">
                 <div>
                   <CardTitle className="text-lg text-slate-100">{group.name}</CardTitle>
-                  <p className="text-xs text-slate-400 mt-1">{group.description || 'Regular morning & afternoon route'}</p>
+                  <p className="text-xs text-slate-400 mt-1">{group.description || 'Regular morning & afternoon Coimbatore route'}</p>
                 </div>
                 <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-brand-500/20 text-brand-400">
                   {group.members?.length || group._count?.members || 0} Students
@@ -124,7 +131,7 @@ const DriverGroups = () => {
                 <div className="flex items-center gap-1.5 text-slate-300 font-semibold">
                   <MapPin size={14} className="text-emerald-400" /> Destination Checkpoint:
                 </div>
-                <p className="text-slate-400 pl-5">{group.destinations?.[0]?.name || 'Campus Gate 1'}</p>
+                <p className="text-slate-400 pl-5">{group.destinations?.[0]?.name || 'PSG Tech & Sarvajana Campus, Peelamedu'}</p>
               </div>
 
               {/* Student Roster Preview */}
@@ -149,7 +156,7 @@ const DriverGroups = () => {
           <div className="col-span-full py-12 text-center text-slate-500">
             <Users size={36} className="mx-auto mb-2 opacity-50" />
             <p className="font-semibold">No transport groups created yet.</p>
-            <p className="text-xs mt-1">Click "Create New Group" to establish your first van route.</p>
+            <p className="text-xs mt-1">Click "Create New Group" to establish your first Coimbatore van route.</p>
           </div>
         )}
       </div>
@@ -160,7 +167,7 @@ const DriverGroups = () => {
           <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-scale-up">
             <div className="p-6 border-b border-slate-800 flex items-center justify-between">
               <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-                <Shield size={18} className="text-brand-500" /> Create Van Transport Group
+                <Shield size={18} className="text-brand-500" /> Create Coimbatore Van Route
               </h3>
               <button onClick={() => setShowCreateModal(false)} className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800">
                 <X size={18} />
@@ -174,7 +181,7 @@ const DriverGroups = () => {
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Route #4 - Indiranagar to Greenwood High"
+                  placeholder="e.g. Route #2 - Gandhipuram to Peelamedu"
                   className="w-full px-3 py-2 text-sm rounded-xl bg-slate-800 border border-slate-700 text-slate-100 focus:outline-none focus:border-brand-500"
                   required
                 />
@@ -186,20 +193,20 @@ const DriverGroups = () => {
                   type="text"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="e.g. Morning pickup 7:30 AM, AC Van #KA-01-AB-1234"
+                  placeholder="e.g. Morning pickup 7:30 AM across Coimbatore, AC Van #TN-38-AB-1234"
                   className="w-full px-3 py-2 text-sm rounded-xl bg-slate-800 border border-slate-700 text-slate-100 focus:outline-none focus:border-brand-500"
                 />
               </div>
 
               <div className="p-4 rounded-xl bg-slate-800/50 border border-slate-700 space-y-3">
-                <label className="text-xs font-bold text-slate-300 block">Drop Destination (Campus / Office)</label>
-                <input
-                  type="text"
+                <label className="text-xs font-bold text-slate-300 block">Drop Destination (Campus / School)</label>
+                
+                {/* Autocomplete for destination */}
+                <LocationAutocomplete
                   value={destinationName}
-                  onChange={(e) => setDestinationName(e.target.value)}
-                  placeholder="e.g. Greenwood High School Campus"
-                  className="w-full px-3 py-2 text-xs rounded-xl bg-slate-800 border border-slate-700 text-slate-100 focus:outline-none focus:border-brand-500"
-                  required
+                  onChange={setDestinationName}
+                  onSelect={handleDestinationSelect}
+                  placeholder="Search campus or landmark in Coimbatore..."
                 />
 
                 <div className="grid grid-cols-2 gap-2">

@@ -6,19 +6,12 @@ import { MapPin, Bell, User, Phone, Check, Navigation, Search, Shield } from 'lu
 import api from '../../api/axios'
 import { requestNotificationPermission, showNotification } from '../../lib/notifications'
 import LiveMap from '../../components/map/LiveMap'
-
-const POPULAR_PICKUP_SPOTS = [
-  { address: 'Indiranagar 100ft Road, Bengaluru', lat: 12.9784, lng: 77.6408 },
-  { address: 'Koramangala 4th Block, Bengaluru', lat: 12.9352, lng: 77.6245 },
-  { address: 'HSR Layout Sector 2, Bengaluru', lat: 12.9116, lng: 77.6389 },
-  { address: 'MG Road Metro Station, Bengaluru', lat: 12.9756, lng: 77.6066 },
-  { address: 'Whitefield ITPL Main Road, Bengaluru', lat: 12.9863, lng: 77.7342 },
-]
+import LocationAutocomplete, { COIMBATORE_LANDMARKS } from '../../components/ui/LocationAutocomplete'
 
 const StudentSettings = () => {
   const { user } = useAuthStore()
   const [address, setAddress] = useState('')
-  const [coords, setCoords] = useState({ lat: 12.9716, lng: 77.5946 })
+  const [coords, setCoords] = useState({ lat: 11.0090, lng: 76.9500 }) // Default RS Puram, Coimbatore
   const [label, setLabel] = useState('Home Pickup Point')
   const [loading, setLoading] = useState(false)
   const [savedSuccess, setSavedSuccess] = useState(false)
@@ -33,16 +26,16 @@ const StudentSettings = () => {
         if (res.data.data) {
           const loc = res.data.data
           setAddress(loc.address || '')
-          setCoords({ lat: loc.lat || 12.9716, lng: loc.lng || 77.5946 })
+          setCoords({ lat: loc.lat || 11.0090, lng: loc.lng || 76.9500 })
           setLabel(loc.label || 'Home Pickup Point')
         }
       })
       .catch((err) => console.error('Error fetching location:', err))
   }, [])
 
-  const handleSelectPreset = (spot) => {
-    setAddress(spot.address)
-    setCoords({ lat: spot.lat, lng: spot.lng })
+  const handleLocationSelect = (loc) => {
+    setAddress(loc.address || loc.name)
+    setCoords({ lat: loc.lat, lng: loc.lng })
   }
 
   const handleSaveLocation = async (e) => {
@@ -52,7 +45,7 @@ const StudentSettings = () => {
       await api.post('/auth/location', {
         lat: coords.lat,
         lng: coords.lng,
-        address: address || 'Custom Pickup Location',
+        address: address || 'Custom Pickup Location, Coimbatore',
         label,
       })
       setSavedSuccess(true)
@@ -69,7 +62,7 @@ const StudentSettings = () => {
     setNotificationsEnabled(granted)
     if (granted) {
       showNotification('RouteSync Notifications Active', {
-        body: "You'll receive live alerts when your driver departs and approaches your stop.",
+        body: "You'll receive live alerts when your driver departs and approaches your stop in Coimbatore.",
       })
     }
   }
@@ -77,9 +70,9 @@ const StudentSettings = () => {
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 font-display">Student Settings & Preferences</h1>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 font-display">Student Settings & Pickup Point</h1>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Configure your morning pickup coordinates, contact details, and route alert notifications.
+          Configure your morning pickup coordinates in Coimbatore, contact details, and route alert notifications.
         </p>
       </div>
 
@@ -108,8 +101,12 @@ const StudentSettings = () => {
                 <span className="font-semibold text-brand-400 uppercase">{user?.role}</span>
               </div>
               <div className="flex justify-between">
+                <span className="text-slate-400">Location City:</span>
+                <span className="font-semibold text-emerald-400">Coimbatore, TN</span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-slate-400">Phone:</span>
-                <span className="font-semibold">{user?.phone || '+91 98765 43210'}</span>
+                <span className="font-semibold">{user?.phone || '+91 92222 22221'}</span>
               </div>
             </div>
 
@@ -143,10 +140,10 @@ const StudentSettings = () => {
         <Card className="md:col-span-2 border-slate-800 bg-slate-900/50">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2 text-slate-100">
-              <MapPin size={18} className="text-brand-500" /> Morning Pickup Point & Coordinates
+              <MapPin size={18} className="text-brand-500" /> Coimbatore Pickup Point & Dropdown Selector
             </CardTitle>
             <p className="text-xs text-slate-400">
-              The 2-Opt route optimizer utilizes your exact pickup coordinates to construct the optimal morning sequence.
+              Search any Coimbatore locality or landmark. The 2-Opt route optimizer utilizes your pickup coordinates to construct the fastest morning sequence.
             </p>
           </CardHeader>
           <CardContent>
@@ -157,38 +154,36 @@ const StudentSettings = () => {
                   type="text"
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
-                  placeholder="e.g. Home Gate, Society Clubhouse"
+                  placeholder="e.g. Home Gate, RS Puram West, Society Entrance"
                   className="w-full px-3 py-2 text-sm rounded-xl bg-slate-800 border border-slate-700 text-slate-100 focus:outline-none focus:border-brand-500"
                 />
               </div>
 
+              {/* Location Autocomplete Dropdown */}
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Pickup Address / Landmark</label>
-                <div className="relative">
-                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Enter landmark or street address..."
-                    className="w-full pl-9 pr-3 py-2 text-sm rounded-xl bg-slate-800 border border-slate-700 text-slate-100 focus:outline-none focus:border-brand-500"
-                    required
-                  />
-                </div>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">
+                  Search Location (Coimbatore Dropdown Menu)
+                </label>
+                <LocationAutocomplete
+                  value={address}
+                  onChange={setAddress}
+                  onSelect={handleLocationSelect}
+                  placeholder="Type to search Coimbatore locations (e.g. Gandhipuram, RS Puram, Peelamedu)..."
+                />
               </div>
 
-              {/* Preset Quick Select */}
+              {/* Preset Quick Select Chips */}
               <div>
-                <span className="text-[11px] font-semibold text-slate-400 block mb-1.5">Quick Select Bengaluru Hubs:</span>
+                <span className="text-[11px] font-semibold text-slate-400 block mb-1.5">Quick Select Popular Coimbatore Hubs:</span>
                 <div className="flex flex-wrap gap-1.5">
-                  {POPULAR_PICKUP_SPOTS.map((spot, i) => (
+                  {COIMBATORE_LANDMARKS.slice(0, 6).map((spot, i) => (
                     <button
                       key={i}
                       type="button"
-                      onClick={() => handleSelectPreset(spot)}
-                      className="px-2.5 py-1 text-[11px] rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 transition-colors"
+                      onClick={() => handleLocationSelect(spot)}
+                      className="px-2.5 py-1 text-[11px] rounded-lg bg-slate-800 hover:bg-brand-500/20 hover:text-brand-400 border border-slate-700 text-slate-300 transition-colors"
                     >
-                      {spot.address.split(',')[0]}
+                      {spot.name}
                     </button>
                   ))}
                 </div>
@@ -231,7 +226,7 @@ const StudentSettings = () => {
               <div className="pt-2 flex items-center justify-between">
                 {savedSuccess ? (
                   <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1">
-                    <Check size={14} /> Pickup location saved successfully!
+                    <Check size={14} /> Pickup location saved successfully in Coimbatore!
                   </span>
                 ) : (
                   <span className="text-xs text-slate-400">Updates take effect immediately on next route start</span>

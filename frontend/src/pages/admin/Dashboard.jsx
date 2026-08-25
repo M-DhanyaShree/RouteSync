@@ -91,13 +91,13 @@ const AdminDashboard = () => {
     return matchesFilter && matchesSearch
   })
 
-  // Map coordinates of fleet vans
+  // Map coordinates of fleet vans in Coimbatore
   const fleetMapStops = fleet.map((f, i) => ({
     id: f.groupId,
     name: `${f.name} (${f.driverName})`,
     address: `Status: ${f.status} • ${f.studentCount} Students`,
-    lat: 12.9716 + (i - 1) * 0.015,
-    lng: 77.5946 + (i - 1) * 0.012,
+    lat: 11.0168 + (i - 1) * 0.015,
+    lng: 76.9558 + (i - 1) * 0.012,
   }))
 
   return (

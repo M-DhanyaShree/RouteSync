@@ -51,11 +51,11 @@ export class InMemoryPrisma {
 
     // 3. Students
     const studentData = [
-      { id: 'user-student-01', name: 'Aarav Sharma', email: 'aarav@routesync.app', phone: '+919222222221', lat: 12.9141, lng: 77.6101 },
-      { id: 'user-student-02', name: 'Priya Nair', email: 'priya@routesync.app', phone: '+919222222222', lat: 12.9200, lng: 77.6150 },
-      { id: 'user-student-03', name: 'Rohan Mehta', email: 'rohan@routesync.app', phone: '+919222222223', lat: 12.9080, lng: 77.6080 },
-      { id: 'user-student-04', name: 'Sneha Gupta', email: 'sneha@routesync.app', phone: '+919222222224', lat: 12.9230, lng: 77.6200 },
-      { id: 'user-student-05', name: 'Karthik Reddy', email: 'karthik@routesync.app', phone: '+919222222225', lat: 12.9050, lng: 77.6050 },
+      { id: 'user-student-01', name: 'Aarav Sharma', email: 'aarav@routesync.app', phone: '+919222222221', lat: 11.0090, lng: 76.9500, address: 'RS Puram, Coimbatore, Tamil Nadu' },
+      { id: 'user-student-02', name: 'Priya Nair', email: 'priya@routesync.app', phone: '+919222222222', lat: 11.0183, lng: 76.9644, address: 'Gandhipuram, Coimbatore, Tamil Nadu' },
+      { id: 'user-student-03', name: 'Rohan Mehta', email: 'rohan@routesync.app', phone: '+919222222223', lat: 11.0280, lng: 76.9420, address: 'Saibaba Colony, Coimbatore, Tamil Nadu' },
+      { id: 'user-student-04', name: 'Sneha Gupta', email: 'sneha@routesync.app', phone: '+919222222224', lat: 10.9980, lng: 76.9850, address: 'Ramanathapuram, Coimbatore, Tamil Nadu' },
+      { id: 'user-student-05', name: 'Karthik Reddy', email: 'karthik@routesync.app', phone: '+919222222225', lat: 10.9995, lng: 77.0260, address: 'Singanallur, Coimbatore, Tamil Nadu' },
     ]
 
     for (const s of studentData) {
@@ -78,8 +78,8 @@ export class InMemoryPrisma {
         userId: s.id,
         lat: s.lat,
         lng: s.lng,
-        address: `${s.name}'s Home, Bengaluru`,
-        label: 'PICKUP',
+        address: s.address,
+        label: 'Home Pickup Point',
         isDefault: true,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -89,10 +89,10 @@ export class InMemoryPrisma {
     // 4. Group
     const group = {
       id: 'group-01',
-      name: 'Morning Route - Bengaluru',
-      description: 'Daily morning school transport for South Bengaluru',
+      name: 'Morning Route #1 - Coimbatore Metro',
+      description: 'Daily morning school & college transport across Coimbatore',
       driverId: 'user-driver-01',
-      inviteCode: 'RS-DEMO-01',
+      inviteCode: 'CBE-RTE-01',
       maxCapacity: 15,
       isActive: true,
       createdAt: new Date(),
@@ -104,10 +104,10 @@ export class InMemoryPrisma {
     this._destinations.push({
       id: 'dest-01',
       groupId: 'group-01',
-      name: 'Greenwood Public School',
-      lat: 12.9352,
-      lng: 77.6245,
-      address: 'Greenwood Public School, Koramangala, Bengaluru - 560034',
+      name: 'PSG Tech & Sarvajana Campus',
+      lat: 11.0240,
+      lng: 77.0028,
+      address: 'Avinashi Road, Peelamedu, Coimbatore, Tamil Nadu - 641004',
       order: 0,
     })
 
@@ -331,10 +331,38 @@ export class InMemoryPrisma {
         return true
       }) || null
     },
+    findUnique: async ({ where }: { where: { id?: string } }) => {
+      return this._locations.find(l => where.id && l.id === where.id) || null
+    },
     create: async ({ data }: { data: any }) => {
       const loc = { id: this.id('loc'), createdAt: new Date(), updatedAt: new Date(), ...data }
       this._locations.push(loc)
       return loc
+    },
+    update: async ({ where, data }: { where: { id: string }; data: any }) => {
+      const loc = this._locations.find(l => l.id === where.id)
+      if (loc) {
+        Object.assign(loc, data, { updatedAt: new Date() })
+        return loc
+      }
+      return null
+    },
+    updateMany: async ({ where, data }: { where: any; data: any }) => {
+      let count = 0
+      this._locations.forEach(l => {
+        if (where.userId && l.userId !== where.userId) return
+        Object.assign(l, data, { updatedAt: new Date() })
+        count++
+      })
+      return { count }
+    },
+    delete: async ({ where }: { where: { id: string } }) => {
+      const idx = this._locations.findIndex(l => l.id === where.id)
+      if (idx !== -1) {
+        const [deleted] = this._locations.splice(idx, 1)
+        return deleted
+      }
+      return null
     },
     deleteMany: async () => {
       this._locations = []
