@@ -15,6 +15,15 @@ export class GroupsRepository {
         driverId,
         inviteCode: generateInviteCode(),
         maxCapacity: dto.maxCapacity,
+        destinations: {
+          create: dto.destinations?.map((d: any) => ({
+            name: d.name,
+            lat: d.lat,
+            lng: d.lng,
+            address: d.address,
+            order: d.order || 0
+          })) || []
+        }
       },
       include: { destinations: true, _count: { select: { members: true } } },
     })

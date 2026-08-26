@@ -4,6 +4,13 @@ export const createGroupSchema = z.object({
   name: z.string().min(3, 'Group name must be at least 3 characters').max(100),
   description: z.string().max(300).optional(),
   maxCapacity: z.number().int().min(1).max(60).default(20),
+  destinations: z.array(z.object({
+    name: z.string().min(2).max(100),
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+    address: z.string().min(5),
+    order: z.number().int().min(0).default(0),
+  })).optional(),
 })
 
 export const updateGroupSchema = z.object({

@@ -53,6 +53,19 @@ const DriverDashboard = () => {
 
   useEffect(() => {
     loadData()
+    // Fetch real driver location
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setVanLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          })
+        },
+        (err) => console.error("Error getting driver location:", err),
+        { enableHighAccuracy: true }
+      )
+    }
   }, [])
 
   // Socket listener for real-time events (attendance changes, late absence re-optimization, etc.)
@@ -97,6 +110,36 @@ const DriverDashboard = () => {
       socket.off('trip:stop_update', handleStopUpdate)
     }
   }, [selectedGroup, activeTrip?.id])
+
+  // Real-world continuous GPS tracking when trip is active
+  useEffect(() => {
+    let watchId;
+    if (navigator.geolocation && activeTrip) {
+      watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          setVanLocation({ lat, lng });
+
+          const socket = getSocket();
+          if (socket) {
+            socket.emit('location:send', {
+              tripId: activeTrip.id,
+              lat,
+              lng,
+              speed: position.coords.speed || 30,
+              heading: position.coords.heading || 0
+            });
+          }
+        },
+        (err) => console.error("Error tracking live location:", err),
+        { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+      );
+    }
+    return () => {
+      if (watchId) navigator.geolocation.clearWatch(watchId);
+    };
+  }, [activeTrip]);
 
   const handleStartTrip = async (group) => {
     try {
@@ -417,6 +460,7 @@ const DriverDashboard = () => {
                   driverLocation={vanLocation}
                   stops={stops}
                   destination={selectedGroup?.destinations?.[0]}
+                  route={activeTrip.routePolyline}
                 />
               </div>
             </div>
@@ -448,7 +492,7 @@ const DriverDashboard = () => {
                   <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center justify-between text-sm">
                     <span className="text-slate-400">Destination:</span>
                     <span className="font-medium text-slate-200">
-                      {group.destinations?.[0]?.name || 'PSG Tech & Sarvajana Campus, Peelamedu'}
+                      {group.destinations?.[0]?.name || 'Destination not set'}
                     </span>
                   </div>
 

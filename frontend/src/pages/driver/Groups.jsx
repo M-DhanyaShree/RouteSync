@@ -131,7 +131,7 @@ const DriverGroups = () => {
                 <div className="flex items-center gap-1.5 text-slate-300 font-semibold">
                   <MapPin size={14} className="text-emerald-400" /> Destination Checkpoint:
                 </div>
-                <p className="text-slate-400 pl-5">{group.destinations?.[0]?.name || 'PSG Tech & Sarvajana Campus, Peelamedu'}</p>
+                <p className="text-slate-400 pl-5">{group.destinations?.[0]?.name || 'Destination not set'}</p>
               </div>
 
               {/* Student Roster Preview */}

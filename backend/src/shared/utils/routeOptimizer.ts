@@ -1,4 +1,4 @@
-// Haversine distance in km
+// Haversine distance in km (kept as fallback)
 export function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371 // Earth radius in km
   const dLat = ((lat2 - lat1) * Math.PI) / 180
@@ -27,6 +27,7 @@ export interface OptimizationInput {
   origin: { lat: number; lng: number }
   stops: StopPoint[]
   destination: { lat: number; lng: number }
+  distanceMatrix?: number[][] // Matrix in meters from ORS
 }
 
 export interface OptimizationResult {
@@ -35,30 +36,41 @@ export interface OptimizationResult {
   algorithm: 'nearest-neighbor' | '2-opt' | 'vrp-solver'
 }
 
-/**
- * Pluggable Route Optimizer Interface (Phase 3 Architecture)
- * Allows swapping algorithms with Google OR-Tools or custom VRP solvers
- */
 export interface IRouteOptimizer {
   optimize(input: OptimizationInput): Promise<OptimizationResult>
 }
 
-/**
- * Phase 1: Nearest Neighbor Heuristic
- */
+// Helper to get distance from matrix or fallback to Haversine
+function getDistance(
+  matrix: number[][] | undefined,
+  fromIdx: number,
+  toIdx: number,
+  fromLat: number,
+  fromLng: number,
+  toLat: number,
+  toLng: number
+): number {
+  if (matrix && matrix[fromIdx] && matrix[fromIdx][toIdx] !== undefined) {
+    return matrix[fromIdx][toIdx] / 1000 // ORS returns meters, we use km
+  }
+  return calculateDistanceKm(fromLat, fromLng, toLat, toLng)
+}
+
 export class NearestNeighborOptimizer implements IRouteOptimizer {
   async optimize(input: OptimizationInput): Promise<OptimizationResult> {
-    const { origin, stops, destination } = input
+    const { origin, stops, destination, distanceMatrix } = input
 
     if (stops.length === 0) {
-      const directDist = calculateDistanceKm(origin.lat, origin.lng, destination.lat, destination.lng)
+      const directDist = getDistance(distanceMatrix, 0, 1, origin.lat, origin.lng, destination.lat, destination.lng)
       return { orderedStops: [], totalDistanceKm: Math.round(directDist * 10) / 10, algorithm: 'nearest-neighbor' }
     }
 
-    const unvisited = [...stops]
+    const unvisited = stops.map((stop, i) => ({ stop, origIdx: i + 1 }))
     const ordered: StopPoint[] = []
+    
     let currentLat = origin.lat
     let currentLng = origin.lng
+    let currentMatrixIdx = 0 // start at origin (0)
     let totalDist = 0
 
     while (unvisited.length > 0) {
@@ -66,21 +78,24 @@ export class NearestNeighborOptimizer implements IRouteOptimizer {
       let minDistance = Infinity
 
       for (let i = 0; i < unvisited.length; i++) {
-        const d = calculateDistanceKm(currentLat, currentLng, unvisited[i].lat, unvisited[i].lng)
+        const u = unvisited[i]
+        const d = getDistance(distanceMatrix, currentMatrixIdx, u.origIdx, currentLat, currentLng, u.stop.lat, u.stop.lng)
         if (d < minDistance) {
           minDistance = d
           nearestIdx = i
         }
       }
 
-      const nextStop = unvisited.splice(nearestIdx, 1)[0]
-      ordered.push(nextStop)
+      const next = unvisited.splice(nearestIdx, 1)[0]
+      ordered.push(next.stop)
       totalDist += minDistance
-      currentLat = nextStop.lat
-      currentLng = nextStop.lng
+      currentLat = next.stop.lat
+      currentLng = next.stop.lng
+      currentMatrixIdx = next.origIdx
     }
 
-    totalDist += calculateDistanceKm(currentLat, currentLng, destination.lat, destination.lng)
+    const destIdx = stops.length + 1
+    totalDist += getDistance(distanceMatrix, currentMatrixIdx, destIdx, currentLat, currentLng, destination.lat, destination.lng)
 
     return {
       orderedStops: ordered,
@@ -90,44 +105,53 @@ export class NearestNeighborOptimizer implements IRouteOptimizer {
   }
 }
 
-/**
- * Phase 2: 2-Opt Heuristic Route Optimizer
- * Refines the Nearest-Neighbor sequence by reversing pairs of edges to eliminate route crossings.
- */
 export class TwoOptRouteOptimizer implements IRouteOptimizer {
   private calculateTotalTourDistance(
     origin: { lat: number; lng: number },
+    tourIndices: number[], // indices mapping to original stops array (1-based, 0 is origin, N+1 is dest)
     stops: StopPoint[],
-    destination: { lat: number; lng: number }
+    destination: { lat: number; lng: number },
+    matrix?: number[][]
   ): number {
-    if (stops.length === 0) {
-      return calculateDistanceKm(origin.lat, origin.lng, destination.lat, destination.lng)
+    if (tourIndices.length === 0) {
+      return getDistance(matrix, 0, 1, origin.lat, origin.lng, destination.lat, destination.lng)
     }
 
-    let dist = calculateDistanceKm(origin.lat, origin.lng, stops[0].lat, stops[0].lng)
-    for (let i = 0; i < stops.length - 1; i++) {
-      dist += calculateDistanceKm(stops[i].lat, stops[i].lng, stops[i + 1].lat, stops[i + 1].lng)
+    const firstStopIdx = tourIndices[0]
+    const firstStop = stops[firstStopIdx - 1]
+    let dist = getDistance(matrix, 0, firstStopIdx, origin.lat, origin.lng, firstStop.lat, firstStop.lng)
+
+    for (let i = 0; i < tourIndices.length - 1; i++) {
+      const fromIdx = tourIndices[i]
+      const toIdx = tourIndices[i + 1]
+      const fromStop = stops[fromIdx - 1]
+      const toStop = stops[toIdx - 1]
+      dist += getDistance(matrix, fromIdx, toIdx, fromStop.lat, fromStop.lng, toStop.lat, toStop.lng)
     }
-    dist += calculateDistanceKm(stops[stops.length - 1].lat, stops[stops.length - 1].lng, destination.lat, destination.lng)
+
+    const lastStopIdx = tourIndices[tourIndices.length - 1]
+    const lastStop = stops[lastStopIdx - 1]
+    const destIdx = stops.length + 1
+    dist += getDistance(matrix, lastStopIdx, destIdx, lastStop.lat, lastStop.lng, destination.lat, destination.lng)
+    
     return dist
   }
 
   async optimize(input: OptimizationInput): Promise<OptimizationResult> {
-    const { origin, stops, destination } = input
+    const { origin, stops, destination, distanceMatrix } = input
 
     if (stops.length <= 2) {
-      // 2 or fewer stops cannot benefit from 2-opt swap
       const nn = new NearestNeighborOptimizer()
       return nn.optimize(input)
     }
 
-    // Step 1: Obtain initial tour using Nearest Neighbor
     const nn = new NearestNeighborOptimizer()
     const initialResult = await nn.optimize(input)
-    let bestTour = [...initialResult.orderedStops]
-    let bestDist = this.calculateTotalTourDistance(origin, bestTour, destination)
+    
+    // Map initial result back to indices 1..N
+    let bestTourIndices = initialResult.orderedStops.map(s => stops.findIndex(orig => orig.studentId === s.studentId) + 1)
+    let bestDist = this.calculateTotalTourDistance(origin, bestTourIndices, stops, destination, distanceMatrix)
 
-    // Step 2: 2-Opt Local Search
     let improved = true
     let iterations = 0
     const maxIterations = 50
@@ -136,19 +160,18 @@ export class TwoOptRouteOptimizer implements IRouteOptimizer {
       improved = false
       iterations++
 
-      for (let i = 0; i < bestTour.length - 1; i++) {
-        for (let k = i + 1; k < bestTour.length; k++) {
-          // Perform 2-opt swap: reverse segment between i and k
+      for (let i = 0; i < bestTourIndices.length - 1; i++) {
+        for (let k = i + 1; k < bestTourIndices.length; k++) {
           const candidateTour = [
-            ...bestTour.slice(0, i),
-            ...bestTour.slice(i, k + 1).reverse(),
-            ...bestTour.slice(k + 1),
+            ...bestTourIndices.slice(0, i),
+            ...bestTourIndices.slice(i, k + 1).reverse(),
+            ...bestTourIndices.slice(k + 1),
           ]
 
-          const candidateDist = this.calculateTotalTourDistance(origin, candidateTour, destination)
+          const candidateDist = this.calculateTotalTourDistance(origin, candidateTour, stops, destination, distanceMatrix)
 
           if (candidateDist < bestDist - 0.01) {
-            bestTour = candidateTour
+            bestTourIndices = candidateTour
             bestDist = candidateDist
             improved = true
             break
@@ -158,20 +181,18 @@ export class TwoOptRouteOptimizer implements IRouteOptimizer {
       }
     }
 
+    const orderedStops = bestTourIndices.map(idx => stops[idx - 1])
+
     return {
-      orderedStops: bestTour,
+      orderedStops,
       totalDistanceKm: Math.round(bestDist * 10) / 10,
       algorithm: '2-opt',
     }
   }
 }
 
-/**
- * Phase 3: Future Google OR-Tools / External VRP Solver Provider
- */
 export class ExternalVRPOptimizer implements IRouteOptimizer {
   async optimize(input: OptimizationInput): Promise<OptimizationResult> {
-    // Falls back gracefully to 2-Opt if external OR-Tools solver is not connected
     const fallback = new TwoOptRouteOptimizer()
     return fallback.optimize(input)
   }
@@ -188,4 +209,3 @@ export function createOptimizer(strategy: 'nearest-neighbor' | '2-opt' | 'vrp' =
       return new TwoOptRouteOptimizer()
   }
 }
-

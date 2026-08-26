@@ -7,12 +7,12 @@ import { createOptimizer, calculateDistanceKm } from '../../shared/utils/routeOp
 import { etaEngine } from '../../shared/utils/etaEngine'
 import { broadcastToGroup, broadcastToTrip } from '../../shared/services/socket.service'
 import { notificationService, Notifications } from '../../shared/services/notification.service'
+import { orsService } from '../../shared/services/ors.service'
 import { prisma } from '../../config/database'
 import { logger } from '../../config/logger'
 
 export class TripsService {
   async startTrip(driverId: string, dto: StartTripDto) {
-    // 1. Check if group has active trip
     const activeTrip = await tripsRepository.getActiveTripByGroup(dto.groupId)
     if (activeTrip) throw new AppError('An active trip already exists for this group', 400)
 
@@ -20,15 +20,12 @@ export class TripsService {
     if (!group) throw new AppError('Group not found', 404)
     if (group.driverId !== driverId) throw new AppError('Only the driver can start the trip', 403)
 
-    // 2. Lock attendance for today
     const today = new Date()
     today.setHours(0, 0, 0, 0)
 
-    // Create planned trip record first
     const trip = await tripsRepository.createTrip(driverId, dto)
     await attendanceRepository.lockForGroup(dto.groupId, today, trip.id)
 
-    // 3. Get PRESENT students
     const todayAttendance = await attendanceRepository.findTodayForGroup(dto.groupId)
     const presentStudents = todayAttendance.filter((a: any) => a.status === 'PRESENT')
 
@@ -37,10 +34,8 @@ export class TripsService {
       throw new AppError('No students marked present today', 400)
     }
 
-    // 4. Gather pickup coordinates
     const stopsForOptimization = []
     for (const record of presentStudents) {
-      // Find saved location or fallback to student profile pickup spot
       let loc = await prisma.location.findFirst({ where: { userId: record.studentId, isDefault: true } })
       if (!loc) {
         loc = await prisma.location.findFirst({ where: { userId: record.studentId } })
@@ -56,39 +51,55 @@ export class TripsService {
           address: loc.address || 'Pickup Spot',
         })
       } else {
-        // Fallback default coordinate slightly offset from driver origin
-        stopsForOptimization.push({
-          studentId: record.studentId,
-          name: record.student?.name || 'Student',
-          phone: record.student?.phone,
-          lat: dto.startLat + (Math.random() - 0.5) * 0.02,
-          lng: dto.startLng + (Math.random() - 0.5) * 0.02,
-          address: 'Default Pickup Spot',
-        })
+        throw new AppError(`Student ${record.student?.name || record.studentId} has no saved pickup location. Cannot generate route.`, 400)
       }
     }
 
-    // 5. Optimize route using 2-Opt TSP
     const destinationLoc = dto.destinationId
       ? group.destinations.find((d: any) => d.id === dto.destinationId)
-      : group.destinations?.[0] || { lat: dto.startLat + 0.04, lng: dto.startLng + 0.04, address: 'Campus Main Gate' }
+      : group.destinations?.[0]
+
+    if (!destinationLoc) {
+      throw new AppError('No destination configured for this group. Cannot generate route.', 400)
+    }
+
+    // Prepare coordinates for ORS Matrix
+    const origin = { lat: dto.startLat, lng: dto.startLng }
+    const destination = { lat: destinationLoc.lat, lng: destinationLoc.lng }
+    const allCoords: [number, number][] = [
+      [origin.lat, origin.lng],
+      ...stopsForOptimization.map(s => [s.lat, s.lng] as [number, number]),
+      [destination.lat, destination.lng]
+    ]
+
+    // Fetch matrix once
+    const matrixResult = await orsService.getMatrix(allCoords)
 
     const optimizer = createOptimizer('2-opt')
     const optimizationResult = await optimizer.optimize({
-      origin: { lat: dto.startLat, lng: dto.startLng },
+      origin,
       stops: stopsForOptimization,
-      destination: { lat: destinationLoc.lat, lng: destinationLoc.lng },
+      destination,
+      distanceMatrix: matrixResult.distances
     })
 
-    // 6. Calculate ETAs
     const baseTime = new Date()
     const etas = await etaEngine.calculateETAs(
-      { lat: dto.startLat, lng: dto.startLng },
+      origin,
       optimizationResult.orderedStops.map((s, idx) => ({ ...s, sequence: idx })),
+      stopsForOptimization,
+      matrixResult.durations,
       baseTime
     )
 
-    // 7. Save stops
+    // Fetch directions (polyline)
+    const directionCoords: [number, number][] = [
+      [origin.lat, origin.lng],
+      ...optimizationResult.orderedStops.map(s => [s.lat, s.lng] as [number, number]),
+      [destination.lat, destination.lng]
+    ]
+    const directionsResult = await orsService.getDirections(directionCoords)
+
     const stopsToSave = optimizationResult.orderedStops.map((stop, idx) => {
       const etaObj = etas.find((e) => e.studentId === stop.studentId)
       return {
@@ -100,21 +111,17 @@ export class TripsService {
 
     await tripsRepository.saveTripStops(trip.id, stopsToSave)
 
-    // 8. Update Trip to ACTIVE
     await tripsRepository.updateTripStatus(trip.id, 'ACTIVE', {
       startedAt: baseTime,
-      plannedDistanceKm: optimizationResult.totalDistanceKm,
+      plannedDistanceKm: directionsResult.distance / 1000,
+      routePolyline: directionsResult.coordinates // Stored exactly as needed by frontend Leaflet
     })
 
     await tripsRepository.recordEvent(trip.id, 'STARTED', { lat: dto.startLat, lng: dto.startLng })
-
-    // Log initial driver location
     await tripsRepository.logLocation(trip.id, dto.startLat, dto.startLng)
 
-    // 9. Notify and Broadcast
     broadcastToGroup(dto.groupId, 'trip:started', { tripId: trip.id, groupId: dto.groupId })
 
-    // Notify all present students
     for (const p of presentStudents) {
       notificationService.send(Notifications.tripStarted(p.studentId, group.name, trip.id))
     }
@@ -145,7 +152,6 @@ export class TripsService {
 
     const updatedStop = await tripsRepository.updateStop(stopId, updateData)
 
-    // Record Event
     await tripsRepository.recordEvent(tripId, `STOP_${status}`, {
       stopId,
       studentId: stop.studentId,
@@ -153,7 +159,6 @@ export class TripsService {
       lng: actualLng || stop.lng,
     })
 
-    // Broadcast update
     broadcastToTrip(tripId, 'trip:stop_update', {
       tripId,
       stopId,
@@ -168,14 +173,6 @@ export class TripsService {
       status,
       timestamp: now.toISOString(),
     })
-
-    // If approaching next stop, notify the next student
-    if (status === 'PICKED_UP' || status === 'SKIPPED') {
-      const nextPendingStop = trip.stops.find((s: any) => s.sequence > stop.sequence && s.status === 'PENDING')
-      if (nextPendingStop) {
-        notificationService.send(Notifications.stopApproaching(nextPendingStop.studentId, 5, tripId))
-      }
-    }
 
     return updatedStop
   }
@@ -192,14 +189,12 @@ export class TripsService {
       actualDurationMins = Math.round((endedAt.getTime() - new Date(trip.startedAt).getTime()) / (1000 * 60))
     }
 
-    // Mark remaining pending stops as completed or picked up
     for (const stop of trip.stops) {
       if (stop.status === 'PENDING' || stop.status === 'ARRIVED') {
         await tripsRepository.updateStop(stop.id, { status: 'PICKED_UP', actualDeparture: endedAt })
       }
     }
 
-    // Update trip status
     const updated = await tripsRepository.updateTripStatus(tripId, 'COMPLETED', {
       endedAt,
       actualDurationMins,
@@ -208,11 +203,9 @@ export class TripsService {
 
     await tripsRepository.recordEvent(tripId, 'COMPLETED', { endedAt })
 
-    // Broadcast to trip and group
     broadcastToTrip(tripId, 'trip:completed', { tripId, endedAt })
     broadcastToGroup(trip.groupId, 'trip:completed', { tripId, endedAt })
 
-    // Send notifications to all students in trip
     for (const stop of trip.stops) {
       notificationService.send(Notifications.tripCompleted(stop.studentId, tripId))
     }
@@ -243,7 +236,6 @@ export class TripsService {
 
     await tripsRepository.recordEvent(tripId, 'EMERGENCY', { lat, lng, reason })
 
-    // Broadcast SOS alert
     broadcastToTrip(tripId, 'trip:emergency', { tripId, driverId, lat, lng, reason, timestamp: new Date().toISOString() })
     broadcastToGroup(trip.groupId, 'trip:emergency', {
       tripId,
@@ -255,7 +247,6 @@ export class TripsService {
     })
 
     logger.warn(`🚨 EMERGENCY TRIGGERED on trip ${tripId}: ${reason} at [${lat}, ${lng}]`)
-
     return { status: 'EMERGENCY_DISPATCHED', timestamp: new Date() }
   }
 
@@ -275,10 +266,8 @@ export class TripsService {
     speed?: number,
     heading?: number
   ) {
-    // Record to location logs for breadcrumb tracking & route inspector
     await tripsRepository.logLocation(tripId, lat, lng, speed, heading)
 
-    // Broadcast location
     broadcastToTrip(tripId, 'location:update', {
       tripId,
       driverId,
@@ -289,28 +278,55 @@ export class TripsService {
       timestamp: new Date().toISOString(),
     })
 
-    // Check geofence (500m proximity) to upcoming pending stops and trigger 2-minute alert
     try {
       const trip = await tripsRepository.getTripById(tripId)
       if (trip && trip.stops) {
         for (const stop of trip.stops) {
           if (stop.status === 'PENDING') {
             const distKm = calculateDistanceKm(lat, lng, stop.lat, stop.lng)
+            
+            // Geofence trigger
             if (distKm <= 0.5) {
-              // Within 500m geofence!
               broadcastToTrip(tripId, 'trip:geofence_entered', {
                 tripId,
                 studentId: stop.studentId,
                 stopId: stop.id,
                 distanceMeters: Math.round(distKm * 1000),
               })
-              break
             }
+
+            // ETA based triggers for 5-min and 2-min arrivals
+            const etaMinutes = etaEngine.estimateRemainingETA(lat, lng, stop.lat, stop.lng)
+            
+            if (etaMinutes <= 5 && !stop.notified5min) {
+              notificationService.send({
+                userId: stop.studentId,
+                title: 'Van Approaching',
+                body: `Your van is arriving in approximately ${etaMinutes} minutes. Driver: ${trip.driver?.name || 'Your driver'}.`,
+                type: 'ARRIVAL_WARNING_5MIN',
+                metadata: { tripId, studentId: stop.studentId, etaMinutes, driverName: trip.driver?.name }
+              })
+              await tripsRepository.updateStop(stop.id, { notified5min: true })
+            }
+
+            if (etaMinutes <= 2 && !stop.notified2min) {
+              notificationService.send({
+                userId: stop.studentId,
+                title: 'Van Arriving Now',
+                body: `Your van is arriving in less than ${etaMinutes} minutes. Please step outside. Driver: ${trip.driver?.name || 'Your driver'}.`,
+                type: 'ARRIVAL_WARNING_2MIN',
+                metadata: { tripId, studentId: stop.studentId, etaMinutes, driverName: trip.driver?.name }
+              })
+              await tripsRepository.updateStop(stop.id, { notified2min: true })
+            }
+            
+            // Only notify the very next pending stop, then break
+            break
           }
         }
       }
-    } catch {
-      // Non-blocking
+    } catch (err) {
+      logger.error('Error during live tracking notification generation:', err)
     }
   }
 
@@ -347,14 +363,10 @@ export class TripsService {
     const activeTrip = await tripsRepository.getActiveTripByGroup(groupId)
     if (!activeTrip) return null
 
-    // Find the student's stop
     const stop = activeTrip.stops?.find((s: any) => s.studentId === studentId)
     if (!stop) return null
-
-    // If stop was already visited (ARRIVED or PICKED_UP), don't alter history
     if (stop.status !== 'PENDING') return null
 
-    // 1. Mark stop as SKIPPED
     await tripsRepository.updateStop(stop.id, { status: 'SKIPPED' })
     await tripsRepository.recordEvent(activeTrip.id, 'LATE_ABSENCE_SKIPPED', {
       studentId,
@@ -362,34 +374,69 @@ export class TripsService {
       reason: 'Student informed late absence',
     })
 
-    // 2. Re-optimize remaining PENDING stops
     const remainingPendingStops = (activeTrip.stops || []).filter((s: any) => s.studentId !== studentId && s.status === 'PENDING')
     const completedStops = (activeTrip.stops || []).filter((s: any) => s.status === 'PICKED_UP' || s.status === 'ARRIVED')
 
-    // Origin for re-optimization: latest completed stop or trip start position
     const lastVisited = completedStops.length > 0 ? completedStops[completedStops.length - 1] : { lat: activeTrip.startLat, lng: activeTrip.startLng }
-    const destinationLoc = activeTrip.destination || { lat: activeTrip.startLat + 0.04, lng: activeTrip.startLng + 0.04 }
-
-    let reorderedStops = remainingPendingStops
-    if (remainingPendingStops.length > 1) {
-      const optimizer = createOptimizer('2-opt')
-      const optResult = await optimizer.optimize({
-        origin: { lat: lastVisited.lat, lng: lastVisited.lng },
-        stops: remainingPendingStops,
-        destination: { lat: destinationLoc.lat, lng: destinationLoc.lng },
-      })
-      reorderedStops = optResult.orderedStops
+    
+    // We shouldn't use fallback here either if we want to be strict, but activeTrip should have a destination
+    if (!activeTrip.destination) {
+      logger.warn('Recalculation failed: Trip has no destination')
+      return activeTrip
     }
 
-    // 3. Recalculate ETAs for remaining stops
-    const baseTime = new Date()
-    const etas = await etaEngine.calculateETAs(
-      { lat: lastVisited.lat, lng: lastVisited.lng },
-      reorderedStops.map((s: any, idx: number) => ({ ...s, sequence: completedStops.length + idx })),
-      baseTime
-    )
+    const destinationLoc = { lat: activeTrip.destination.lat, lng: activeTrip.destination.lng }
 
-    // 4. Update sequence and planned ETAs in DB
+    let reorderedStops = remainingPendingStops
+    let etas: any[] = []
+    
+    if (remainingPendingStops.length > 0) {
+      const origin = { lat: lastVisited.lat, lng: lastVisited.lng }
+      
+      const allCoords: [number, number][] = [
+        [origin.lat, origin.lng],
+        ...remainingPendingStops.map((s: any) => [s.lat, s.lng] as [number, number]),
+        [destinationLoc.lat, destinationLoc.lng]
+      ]
+      
+      try {
+        const matrixResult = await orsService.getMatrix(allCoords)
+        
+        const optimizer = createOptimizer('2-opt')
+        const optResult = await optimizer.optimize({
+          origin,
+          stops: remainingPendingStops,
+          destination: destinationLoc,
+          distanceMatrix: matrixResult.distances
+        })
+        reorderedStops = optResult.orderedStops
+        
+        const baseTime = new Date()
+        etas = await etaEngine.calculateETAs(
+          origin,
+          reorderedStops.map((s: any, idx: number) => ({ ...s, sequence: completedStops.length + idx })),
+          remainingPendingStops,
+          matrixResult.durations,
+          baseTime
+        )
+        
+        // Update polyline geometry for remaining trip
+        const directionCoords: [number, number][] = [
+          [origin.lat, origin.lng],
+          ...reorderedStops.map((s: any) => [s.lat, s.lng] as [number, number]),
+          [destinationLoc.lat, destinationLoc.lng]
+        ]
+        const directionsResult = await orsService.getDirections(directionCoords)
+        
+        await tripsRepository.updateTripStatus(activeTrip.id, activeTrip.status, {
+           routePolyline: directionsResult.coordinates
+        })
+      } catch (err) {
+        logger.error('Failed to recalculate route with ORS:', err)
+        // Fallback to existing logic if ORS fails during live route so we don't crash
+      }
+    }
+
     for (let i = 0; i < reorderedStops.length; i++) {
       const st = reorderedStops[i]
       const etaObj = etas.find((e: any) => e.studentId === st.studentId)
@@ -399,7 +446,6 @@ export class TripsService {
       })
     }
 
-    // 5. Broadcast to trip & group so driver & students instantly see the optimized route
     const updatedTrip = await tripsRepository.getTripById(activeTrip.id)
     broadcastToTrip(activeTrip.id, 'trip:stop_update', {
       tripId: activeTrip.id,
@@ -420,7 +466,6 @@ export class TripsService {
     broadcastToTrip(activeTrip.id, 'trip:recalculated', { tripId: activeTrip.id, updatedTrip })
     broadcastToGroup(groupId, 'trip:recalculated', { tripId: activeTrip.id, updatedTrip })
 
-    // 6. Send push notification to Driver
     notificationService.send({
       userId: activeTrip.driverId,
       type: 'TRIP_UPDATE',
@@ -434,4 +479,3 @@ export class TripsService {
 }
 
 export const tripsService = new TripsService()
-

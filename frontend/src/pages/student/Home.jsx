@@ -340,6 +340,7 @@ const StudentHome = () => {
                     driverLocation={driverLocation}
                     stops={activeTrip.stops || []}
                     destination={group?.destinations?.[0]}
+                    route={activeTrip.routePolyline}
                   />
                 </div>
               </div>
